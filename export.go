@@ -431,6 +431,58 @@ func (f *File) Save(outpath string) error {
 
 	return nil
 }
+func (f *File) Write(buf *bytes.Buffer) error {
+
+	if err := f.FileHeader.Write(buf, f.ByteOrder); err != nil {
+		return fmt.Errorf("failed to write file header to buffer: %v", err)
+	}
+
+	if err := f.writeLoadCommands(buf); err != nil {
+		return fmt.Errorf("failed to write load commands: %v", err)
+	}
+
+	endOfLoadsOffset := uint64(buf.Len())
+
+	// Write out segment data to buffer
+	for _, seg := range f.Segments() {
+		if seg.Filesz > 0 {
+			switch seg.Name {
+			case "__TEXT":
+				dat := make([]byte, seg.Filesz)
+				if _, err := f.cr.ReadAtAddr(dat, seg.Addr); err != nil {
+					return fmt.Errorf("failed to read segment %s data: %v", seg.Name, err)
+				}
+				if _, err := buf.Write(dat[endOfLoadsOffset:]); err != nil {
+					return fmt.Errorf("failed to write segment %s to export buffer: %v", seg.Name, err)
+				}
+			case "__LINKEDIT":
+				if f.ledata != nil && f.ledata.Len() > 0 && f.CodeSignature() != nil {
+					if _, err := buf.Write(f.ledata.Bytes()); err != nil {
+						return fmt.Errorf("failed to write segment %s to export buffer: %v", seg.Name, err)
+					}
+				} else {
+					dat := make([]byte, seg.Filesz)
+					if _, err := f.cr.ReadAtAddr(dat, seg.Addr); err != nil {
+						return fmt.Errorf("failed to read segment %s data: %v", seg.Name, err)
+					}
+					if _, err := buf.Write(dat); err != nil {
+						return fmt.Errorf("failed to write segment %s to export buffer: %v", seg.Name, err)
+					}
+				}
+			default:
+				dat := make([]byte, seg.Filesz)
+				if _, err := f.cr.ReadAtAddr(dat, seg.Addr); err != nil {
+					return fmt.Errorf("failed to read segment %s data: %v", seg.Name, err)
+				}
+				if _, err := buf.Write(dat); err != nil {
+					return fmt.Errorf("failed to write segment %s to export buffer: %v", seg.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
 
 func (f *File) optimizeLoadCommands(segMap exportSegMap) error {
 	var depIndex uint64
